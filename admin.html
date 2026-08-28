@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CrediFlow · Administrador / Director</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<header class="top">
+  <h1>🏛️ CrediFlow · Administrador / Director</h1>
+  <div class="der"><span class="badge-rol" id="nombre"></span><button class="btn ghost" onclick="logout()">Salir</button></div>
+</header>
+<div class="layout">
+<nav class="side">
+  <button data-panel="alta" class="activo" onclick="panel('alta')">👥 Alta de colaboradores</button>
+  <button data-panel="bandeja" onclick="panel('bandeja')">📥 Aprobación y desembolso</button>
+  <button data-panel="bd" onclick="panel('bd')">🗂️ Base de clientes</button>
+  <button data-panel="kpi" onclick="panel('kpi')">📊 KPI global</button>
+  <button data-panel="caja" onclick="panel('caja')">🧾 Caja y arqueo</button>
+  <button data-panel="audit" onclick="panel('audit')">🔎 Auditoría</button>
+</nav>
+<main>
+  <div class="panel" id="alta">
+    <h2>Alta de colaboradores</h2>
+    <div class="card"><h3>Nuevo agente / gerente</h3><div class="grid">
+      <div><label>Nombre</label><input id="uNombre"></div>
+      <div><label>Correo</label><input id="uEmail" type="email"></div>
+      <div><label>Contraseña</label><input id="uPass"></div>
+      <div><label>Rol</label><select id="uRol"><option value="agente">Agente / Socio</option><option value="gerente">Gerente / Supervisor</option></select></div>
+      <div><label>Zona (texto libre)</label><input id="uZona" placeholder="Ej. Norte"></div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="altaUsuario()">Dar de alta</button></div>
+    <div class="card"><h3>Colaboradores registrados</h3><div id="usuZone"></div></div>
+  </div>
+
+  <div class="panel" id="bandeja" style="display:none">
+    <h2>Aprobación final (nivel 3 · Director) y desembolso</h2>
+    <div class="nota">El <b>desembolso</b> de créditos y montos solo lo ejecuta el administrador/director, generando el plan de pagos y la salida de caja en efectivo.</div>
+    <div id="banZone"></div>
+  </div>
+
+  <div class="panel" id="bd" style="display:none">
+    <h2>Base de datos de clientes (filtros)</h2>
+    <div class="card"><div class="grid">
+      <div><label>Filtrar por zona</label><select id="fZona" onchange="cargarBD()"><option value="">Todas</option></select></div>
+      <div><label>Filtrar por agente</label><select id="fAgente" onchange="cargarBD()"><option value="">Todos</option></select></div>
+    </div></div>
+    <div id="bdZone"></div>
+  </div>
+
+  <div class="panel" id="kpi" style="display:none"><h2>KPI global de la operación</h2><div id="kpiZone"></div></div>
+
+  <div class="panel" id="caja" style="display:none">
+    <h2>Caja y arqueo</h2>
+    <div id="cajaZone"></div>
+    <div class="card"><h3>Registrar arqueo</h3><div class="grid">
+      <div><label>Total contado en caja ($)</label><input id="arqTotal" type="number" step="0.01"></div>
+      <div><label>Nota</label><input id="arqNota" placeholder="Ej. corte mensual"></div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="hacerArqueo()">Registrar</button>
+    <div id="arqRes"></div></div>
+  </div>
+
+  <div class="panel" id="audit" style="display:none"><h2>Bitácora de auditoría</h2><div id="audZone"></div></div>
+</main>
+</div>
+<div id="toast" class="toast"></div>
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+guard('admin');
+$('#nombre').textContent = currentUser().nombre;
+
+// ---- Alta de colaboradores ----
+async function altaUsuario() {
+  const body = { nombre: $('#uNombre').value, email: $('#uEmail').value, password: $('#uPass').value,
+    rol: $('#uRol').value, zona: $('#uZona').value, creado_por: currentUser().id };
+  try {
+    const r = await API.post('/usuarios', body);
+    toast(r.mensaje);
+    $('#uNombre').value = $('#uEmail').value = $('#uPass').value = $('#uZona').value = '';
+    cargarUsuarios();
+  } catch (e) { toast(e.message); }
+}
+async function cargarUsuarios() {
+  const usr = await API.get('/usuarios');
+  $('#usuZone').innerHTML = tabla(['Nombre', 'Correo', 'Rol', 'Zona', 'Alta', 'Activo'],
+    usr.map(u => [u.nombre, u.email, u.rol, u.zona || '—', fdate(u.fecha_alta), u.activo ? '✅' : '❌']));
+}
+
+// ---- Bandeja: aprobacion final + desembolso ----
+async function cargarBandeja() {
+  const rows = await API.get('/solicitudes/pendientes');
+  $('#banZone').innerHTML = tabla(['Folio', 'Cliente', 'Producto', 'Monto', 'Total a pagar', 'Estado', 'PDF', 'Acciones'],
+    rows.map(s => {
+      const acc = s.estado === 'pendiente_admin'
+        ? `<button class="btn verde" onclick="decidir(${s.id},'aprobar')">Aprobar</button>
+           <button class="btn rojo" onclick="decidir(${s.id},'rechazar')">Rechazar</button>`
+        : `<button class="btn dorado" onclick="desembolsar(${s.id})">💵 Desembolsar</button>`;
+      return [folio(s.id), s.titular_nombre, s.producto, fmt(s.monto), fmt(s.total_pagar), badge(s.estado),
+        `<button class="btn ghost" onclick="abrirPDF('/solicitud/${s.id}/pdf')">PDF</button>`, acc];
+    }));
+}
+async function decidir(id, dec) {
+  const comentario = prompt('Comentario (opcional):') || '';
+  try {
+    const r = await API.post(`/solicitudes/${id}/aprobar?decision=${dec}&comentario=${encodeURIComponent(comentario)}`);
+    toast('Solicitud → ' + r.estado);
+    cargarBandeja();
+  } catch (e) { toast(e.message); }
+}
+async function desembolsar(id) {
+  if (!confirm('¿Confirmar DESEMBOLSO en efectivo de esta solicitud? Generará el plan de pagos y la salida de caja.')) return;
+  try {
+    const r = await API.post(`/solicitudes/${id}/desembolsar`);
+    toast(r.mensaje);
+    cargarBandeja();
+  } catch (e) { toast(e.message); }
+}
+
+// ---- BD clientes ----
+async function llenarFiltros() {
+  const zonas = await API.get('/zonas');
+  $('#fZona').innerHTML = '<option value="">Todas</option>' + zonas.map(z => `<option>${z.nombre}</option>`).join('');
+  const usr = await API.get('/usuarios');
+  $('#fAgente').innerHTML = '<option value="">Todos</option>' + usr.filter(u => u.rol === 'agente').map(u => `<option>${u.nombre}</option>`).join('');
+}
+async function cargarBD() {
+  const q = new URLSearchParams({ filtro_zona: $('#fZona').value, filtro_agente: $('#fAgente').value }).toString();
+  const rows = await API.get('/db_clientes?' + q);
+  $('#bdZone').innerHTML = tabla(['Cliente', 'Teléfono', 'Zona', 'Agente', 'Ingreso', 'Ciclos', '% Cumplimiento', 'Clasificación', 'Comportamiento'],
+    rows.map(c => [c.titular, c.titular_telefono, c.zona || '—', c.agente || '—', fdate(c.fecha_ingreso), c.ciclos_concluidos,
+      c.cumplimiento + '%', `<span class="tag ${c.clasificacion.toLowerCase()}">${c.clasificacion}</span>`, c.comportamiento]));
+}
+
+// ---- KPI global ----
+async function cargarKPI() {
+  const k = await API.get('/kpi/admin');
+  $('#kpiZone').innerHTML =
+    kpiCards([['Clientes', k.total_clientes], ['Agentes', k.total_agentes], ['Gerentes', k.total_gerentes],
+      ['Cartera activa', fmt(k.cartera_activa)], ['% Cobranza global', k.pct_cobranza_global + '%'],
+      ['Créditos activos', k.creditos_activos], ['Créditos concluidos', k.creditos_concluidos]]) +
+    '<h3 style="margin-top:8px">Por agente</h3>' +
+    tabla(['Agente', 'Clientes', 'Nuevos', 'Renovados', '% Cobranza', '% Nuevos', '% Renovados'],
+      k.por_agente.map(a => [a.agente, a.clientes, a.clientes_nuevos, a.clientes_renovados,
+        a.pct_cobranza + '%', a.pct_clientes_nuevos + '%', a.pct_clientes_renovados + '%']));
+}
+
+// ---- Caja y arqueo ----
+async function cargarCaja() {
+  const rows = await API.get('/caja');
+  $('#cajaZone').innerHTML = tabla(['Fecha', 'Tipo', 'Monto', 'Concepto', 'Referencia'],
+    rows.map(c => [fdate(c.fecha), c.tipo === 'ingreso' ? '➕ Ingreso' : '➖ Egreso', fmt(c.monto), c.concepto, c.referencia]));
+}
+async function hacerArqueo() {
+  try {
+    const r = await API.post('/arqueo?total_contado=' + $('#arqTotal').value + '&nota=' + encodeURIComponent($('#arqNota').value));
+    $('#arqRes').innerHTML = `<div class="card"><h3>Resultado</h3><p>Esperado <b>${fmt(r.esperado)}</b> · Contado <b>${fmt(r.contado)}</b> · Diferencia <b>${fmt(r.diferencia)}</b></p></div>`;
+  } catch (e) { toast(e.message); }
+}
+
+// ---- Auditoria ----
+async function cargarAuditoria() {
+  const rows = await API.get('/auditoria');
+  $('#audZone').innerHTML = tabla(['Fecha', 'Usuario', 'Acción', 'Detalle'],
+    rows.map(a => [fdate(a.fecha), a.nombre || '—', a.accion, a.detalle]));
+}
+
+cargarUsuarios(); cargarBandeja(); llenarFiltros(); cargarBD(); cargarKPI(); cargarCaja(); cargarAuditoria();
+</script>
+</body>
+</html>

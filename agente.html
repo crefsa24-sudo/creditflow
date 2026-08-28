@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CrediFlow · Agente / Socio</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<header class="top">
+  <h1>🤝 CrediFlow · Agente / Socio</h1>
+  <div class="der"><span class="badge-rol" id="nombre"></span><button class="btn ghost" onclick="logout()">Salir</button></div>
+</header>
+<div class="layout">
+<nav class="side">
+  <button data-panel="bandeja" class="activo" onclick="panel('bandeja')">📥 Bandeja de solicitudes</button>
+  <button data-panel="cobranza" onclick="panel('cobranza')">💰 Cobranza en efectivo</button>
+  <button data-panel="caja" onclick="panel('caja')">🧾 Caja</button>
+  <button data-panel="kpi" onclick="panel('kpi')">📊 Mi KPI</button>
+</nav>
+<main>
+  <div class="panel" id="bandeja"><h2>Bandeja de solicitudes (nivel 1)</h2><div id="banZone"></div></div>
+  <div class="panel" id="cobranza" style="display:none"><h2>Cobranza de mis clientes</h2><div id="cobZone"></div></div>
+  <div class="panel" id="caja" style="display:none"><h2>Movimientos de caja</h2><div id="cajaZone"></div></div>
+  <div class="panel" id="kpi" style="display:none"><h2>Mi desempeño</h2><div id="kpiZone"></div></div>
+</main>
+</div>
+<div id="toast" class="toast"></div>
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+guard('agente');
+const ME = currentUser();
+$('#nombre').textContent = ME.nombre;
+
+async function cargarBandeja() {
+  const rows = await API.get('/solicitudes/pendientes');
+  $('#banZone').innerHTML = tabla(['Folio', 'Cliente', 'Producto', 'Monto', 'Total a pagar', 'PDF', 'Acciones'],
+    rows.map(s => [folio(s.id), s.titular_nombre, s.producto, fmt(s.monto), fmt(s.total_pagar),
+      `<button class="btn ghost" onclick="abrirPDF('/solicitud/${s.id}/pdf')">PDF</button>`,
+      `<button class="btn verde" onclick="decidir(${s.id},'aprobar')">Aprobar</button>
+       <button class="btn rojo" onclick="decidir(${s.id},'rechazar')">Rechazar</button>`]));
+}
+async function decidir(id, dec) {
+  const comentario = prompt('Comentario (opcional):') || '';
+  try {
+    const r = await API.post(`/solicitudes/${id}/aprobar?decision=${dec}&comentario=${encodeURIComponent(comentario)}`);
+    toast('Solicitud → ' + r.estado);
+    cargarBandeja();
+  } catch (e) { toast(e.message); }
+}
+async function cargarCobranza() {
+  const rows = await API.get('/pagos/pendientes');
+  const mias = rows.filter(p => p.agente === ME.nombre);
+  $('#cobZone').innerHTML = tabla(['Pago #', 'Cliente', 'Crédito', 'Cuota', 'Programado', 'Zona', 'Cobrar'],
+    mias.map(p => [p.numero, p.titular_nombre, p.credito, fmt(p.monto), fdate(p.fecha_programada), p.zona || '—',
+      `<button class="btn verde" onclick="cobrar(${p.id},${p.monto})">Cobrar en efectivo</button>`]));
+}
+async function cobrar(id, monto) {
+  try {
+    const r = await API.post('/pagos/cobrar', { id_pago: id, monto: monto });
+    toast(r.mensaje);
+    cargarCobranza();
+  } catch (e) { toast(e.message); }
+}
+async function cargarCaja() {
+  const rows = await API.get('/caja');
+  $('#cajaZone').innerHTML = tabla(['Fecha', 'Tipo', 'Monto', 'Concepto', 'Referencia'],
+    rows.map(c => [fdate(c.fecha), c.tipo === 'ingreso' ? '➕ Ingreso' : '➖ Egreso', fmt(c.monto), c.concepto, c.referencia]));
+}
+async function cargarKPI() {
+  const k = await API.get('/kpi/agente');
+  $('#kpiZone').innerHTML =
+    kpiCards([['Clientes', k.total_clientes], ['% Cobranza', k.pct_cobranza + '%'], ['% Cumplimiento', k.pct_cumplimiento + '%'],
+      ['Clientes nuevos', k.clientes_nuevos], ['Renovados', k.clientes_renovados], ['Retención', k.retencion_pct + '%']]) +
+    '<h3 style="margin-top:8px">Desglose por zona</h3>' +
+    tabla(['Zona', 'Clientes', '% Cumplimiento'], k.por_zona.map(z => [z.nombre, z.clientes, (z.cumplimiento || 0).toFixed(2) + '%']));
+}
+cargarBandeja(); cargarCobranza(); cargarCaja(); cargarKPI();
+</script>
+</body>
+</html>

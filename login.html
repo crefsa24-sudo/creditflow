@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CrediFlow · Acceso</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body style="display:flex;align-items:center;justify-content:center;min-height:100vh">
+<div class="card" style="width:370px">
+  <h2 class="center" style="color:var(--azul);margin-bottom:2px">💳 CrediFlow</h2>
+  <p class="center" style="color:var(--gris);margin-bottom:16px">Créditos personales · Flujo 100% en efectivo · 4 roles</p>
+  <label>Correo</label>
+  <input id="email" type="email" placeholder="usuario@correo.com" style="margin-bottom:10px">
+  <label>Contraseña</label>
+  <input id="pass" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')ingresar()">
+  <button class="btn" style="width:100%;margin-top:14px" onclick="ingresar()">Entrar</button>
+  <p id="err" style="color:var(--rojo);font-size:12px;margin-top:10px"></p>
+</div>
+<div id="toast" class="toast"></div>
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+async function ingresar() {
+  const email = $('#email').value, password = $('#pass').value;
+  if (!email || !password) { $('#err').textContent = 'Ingresa correo y contraseña'; return; }
+  try {
+    const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); $('#err').textContent = d.detail || 'Error de acceso'; return; }
+    const data = await res.json();
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('user', JSON.stringify(data.usuario));
+    location.href = { cliente: 'cliente.html', agente: 'agente.html', gerente: 'gerente.html', admin: 'admin.html' }[data.usuario.rol] || 'login.html';
+  } catch (e) { $('#err').textContent = 'No se pudo conectar con el servidor'; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CrediFlow · Cliente</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<header class="top">
+  <h1>💳 CrediFlow · App del Cliente</h1>
+  <div class="der"><span class="badge-rol" id="nombre"></span><button class="btn ghost" onclick="logout()">Salir</button></div>
+</header>
+<div class="layout">
+<nav class="side">
+  <button data-panel="solicitar" class="activo" onclick="panel('solicitar')">📝 Nueva solicitud</button>
+  <button data-panel="mis_sol" onclick="panel('mis_sol')">📋 Mis solicitudes</button>
+  <button data-panel="mis_cred" onclick="panel('mis_cred')">💵 Mis créditos</button>
+</nav>
+<main>
+  <div class="panel" id="solicitar"><div id="formZone"></div></div>
+  <div class="panel" id="mis_sol" style="display:none"><h2>Mis solicitudes</h2><div id="solZone"></div></div>
+  <div class="panel" id="mis_cred" style="display:none"><h2>Mis créditos y plan de pagos</h2><div id="credZone"></div></div>
+</main>
+</div>
+<div id="toast" class="toast"></div>
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script src="js/forms.js"></script>
+<script>
+guard('cliente');
+$('#nombre').textContent = currentUser().nombre;
+
+async function cargarSolicitudes() {
+  const rows = await API.get('/mis_solicitudes');
+  $('#solZone').innerHTML = tabla(['Folio', 'Producto', 'Monto', 'Total a pagar', 'Estado', 'Fecha', 'PDF'],
+    rows.map(s => [folio(s.id), s.producto, fmt(s.monto), fmt(s.total_pagar), badge(s.estado), fdate(s.fecha),
+      `<button class="btn ghost" onclick="abrirPDF('/solicitud/${s.id}/pdf')">PDF</button>`]));
+}
+async function cargarCreditos() {
+  const list = await API.get('/mis_creditos');
+  if (!list.length) { $('#credZone').innerHTML = '<p class="nota">Aún no tienes créditos desembolsados.</p>'; return; }
+  $('#credZone').innerHTML = list.map(c => `
+    <div class="card">
+      <h3>Crédito #${c.id} · ${c.producto} · ${fmt(c.monto)} · <span class="estado est ${c.estado}">${c.estado}</span></h3>
+      <p>Cuota ${fmt(c.cuota)} · ${c.plazo} pagos · Saldo actual ${fmt(c.saldo)} · Pagados ${c.pagos_pagados}/${c.plazo}</p>
+      <button class="btn ghost" onclick="verPagos(${c.id})">Ver plan de pagos</button>
+      <div id="pagos${c.id}"></div>
+    </div>`).join('');
+}
+async function verPagos(id) {
+  const ps = await API.get('/mis_pagos/' + id);
+  $('#pagos' + id).innerHTML = tabla(['#', 'Cuota', 'Programado', 'Pagado el', 'Estado'],
+    ps.map(p => [p.numero, fmt(p.monto), fdate(p.fecha_programada), fdate(p.fecha_pago), p.estado]));
+}
+renderSolicitudForm($('#formZone'));
+cargarSolicitudes();
+cargarCreditos();
+</script>
+</body>
+</html>

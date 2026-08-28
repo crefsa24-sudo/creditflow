@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CrediFlow · Gerente / Supervisor</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<header class="top">
+  <h1>📈 CrediFlow · Gerente / Supervisor</h1>
+  <div class="der"><span class="badge-rol" id="nombre"></span><button class="btn ghost" onclick="logout()">Salir</button></div>
+</header>
+<div class="layout">
+<nav class="side">
+  <button data-panel="bandeja" class="activo" onclick="panel('bandeja')">📥 Bandeja (nivel 2)</button>
+  <button data-panel="kpi" onclick="panel('kpi')">📊 KPIs de agentes</button>
+  <button data-panel="bd" onclick="panel('bd')">🗂️ Base de clientes</button>
+  <button data-panel="arqueo" onclick="panel('arqueo')">🧮 Arqueo de caja</button>
+</nav>
+<main>
+  <div class="panel" id="bandeja"><h2>Bandeja de aprobación (nivel 2 · Gerente)</h2><div id="banZone"></div></div>
+  <div class="panel" id="kpi" style="display:none"><h2>Desempeño por agente y zona</h2><div id="kpiZone"></div></div>
+  <div class="panel" id="bd" style="display:none">
+    <h2>Base de datos de clientes</h2>
+    <div class="card"><div class="grid">
+      <div><label>Filtrar por zona</label><select id="fZona" onchange="cargarBD()"><option value="">Todas</option></select></div>
+      <div><label>Filtrar por agente</label><select id="fAgente" onchange="cargarBD()"><option value="">Todos</option></select></div>
+    </div></div>
+    <div id="bdZone"></div>
+  </div>
+  <div class="panel" id="arqueo" style="display:none">
+    <h2>Arqueo / corte de caja</h2>
+    <div class="card"><div class="grid">
+      <div><label>Total contado en caja ($)</label><input id="arqTotal" type="number" step="0.01"></div>
+      <div><label>Nota</label><input id="arqNota" placeholder="Ej. corte semanal"></div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="hacerArqueo()">Registrar arqueo</button>
+    <div id="arqRes" style="margin-top:10px"></div></div>
+  </div>
+</main>
+</div>
+<div id="toast" class="toast"></div>
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+guard('gerente');
+$('#nombre').textContent = currentUser().nombre;
+
+async function cargarBandeja() {
+  const rows = await API.get('/solicitudes/pendientes');
+  $('#banZone').innerHTML = tabla(['Folio', 'Cliente', 'Producto', 'Monto', 'Total a pagar', 'PDF', 'Acciones'],
+    rows.map(s => [folio(s.id), s.titular_nombre, s.producto, fmt(s.monto), fmt(s.total_pagar),
+      `<button class="btn ghost" onclick="abrirPDF('/solicitud/${s.id}/pdf')">PDF</button>`,
+      `<button class="btn verde" onclick="decidir(${s.id},'aprobar')">Aprobar</button>
+       <button class="btn rojo" onclick="decidir(${s.id},'rechazar')">Rechazar</button>`]));
+}
+async function decidir(id, dec) {
+  const comentario = prompt('Comentario (opcional):') || '';
+  try {
+    const r = await API.post(`/solicitudes/${id}/aprobar?decision=${dec}&comentario=${encodeURIComponent(comentario)}`);
+    toast('Solicitud → ' + r.estado);
+    cargarBandeja();
+  } catch (e) { toast(e.message); }
+}
+async function cargarKPI() {
+  const k = await API.get('/kpi/gerente');
+  $('#kpiZone').innerHTML =
+    '<h3>Por agente</h3>' +
+    tabla(['Agente', 'Zona', 'Clientes', 'Nuevos', 'Renovados', '% Cobranza', '% Nuevos', '% Renovados'],
+      k.por_agente.map(a => [a.agente, a.zona, a.clientes, a.clientes_nuevos, a.clientes_renovados,
+        a.pct_cobranza + '%', a.pct_clientes_nuevos + '%', a.pct_clientes_renovados + '%'])) +
+    '<h3 style="margin-top:14px">Por zona</h3>' +
+    tabla(['Zona', 'Clientes', 'Nuevos (90 días)'],
+      k.por_zona.map(z => [z.nombre, z.clientes || 0, z.nuevos || 0]));
+}
+async function llenarFiltros() {
+  const zonas = await API.get('/zonas');
+  $('#fZona').innerHTML = '<option value="">Todas</option>' + zonas.map(z => `<option>${z.nombre}</option>`).join('');
+  const usr = await API.get('/usuarios');
+  $('#fAgente').innerHTML = '<option value="">Todos</option>' + usr.filter(u => u.rol === 'agente').map(u => `<option>${u.nombre}</option>`).join('');
+}
+async function cargarBD() {
+  const za = $('#fZona').value, ag = $('#fAgente').value;
+  const q = new URLSearchParams({ filtro_zona: za, filtro_agente: ag }).toString();
+  const rows = await API.get('/db_clientes?' + q);
+  $('#bdZone').innerHTML = tabla(['Cliente', 'Teléfono', 'Zona', 'Agente', 'Ingreso', 'Ciclos', '% Cumplimiento', 'Clasificación', 'Comportamiento'],
+    rows.map(c => [c.titular, c.titular_telefono, c.zona || '—', c.agente || '—', fdate(c.fecha_ingreso), c.ciclos_concluidos,
+      c.cumplimiento + '%',
+      `<span class="tag ${c.clasificacion.toLowerCase()}">${c.clasificacion}</span>`, c.comportamiento]));
+}
+async function hacerArqueo() {
+  try {
+    const total = $('#arqTotal').value, nota = $('#arqNota').value;
+    const r = await API.post('/arqueo?total_contado=' + total + '&nota=' + encodeURIComponent(nota));
+    $('#arqRes').innerHTML = `<div class="card"><h3>Resultado del arqueo</h3>
+      <p>Esperado: <b>${fmt(r.esperado)}</b> · Contado: <b>${fmt(r.contado)}</b> · Diferencia: <b>${fmt(r.diferencia)}</b></p></div>`;
+  } catch (e) { toast(e.message); }
+}
+cargarBandeja(); cargarKPI(); llenarFiltros(); cargarBD();
+</script>
+</body>
+</html>
